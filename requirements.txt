@@ -1,0 +1,4 @@
+gym
+numpy
+tensorflow
+gym[atari]
