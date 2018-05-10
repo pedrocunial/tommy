@@ -1,5 +1,4 @@
-### Mostly from A. Géron's book
-
+''' Mostly from A. Géron's book '''
 
 import gym
 import numpy as np
@@ -14,9 +13,11 @@ N_GAMES_PER_UPDATE = 10
 SAVE_ITERATIONS = 10
 DISCOUNT_RATE = 0.95
 
+
 def basic_policy(obs):
     # obs[2] = angle left
     return 0 if obs[2] < 0 else 1
+
 
 def discount_rewards(rewards, discount_rate):
     discounted_rewards = np.empty(len(rewards))
@@ -26,6 +27,7 @@ def discount_rewards(rewards, discount_rate):
         discounted_rewards[step] = cumulative_rewards
     return discounted_rewards
 
+
 def discount_and_normalize_rewards(all_rewards, discount_rate):
     all_discounted_rewards = [discount_rewards(rewards, discount_rate)
                               for rewards in all_rewards]
@@ -34,6 +36,7 @@ def discount_and_normalize_rewards(all_rewards, discount_rate):
     reward_std = flat_rewards.std()
     return [(discounted_rewards - reward_mean) / reward_std
             for discounted_rewards in all_discounted_rewards]
+
 
 if __name__ == '__main__':
     totals = []
@@ -63,7 +66,8 @@ if __name__ == '__main__':
     gradient_placeholders = []
     grads_and_vars_feed = []
     for grad, var in grads_and_vars:
-        gradient_placeholder = tf.placeholder(tf.float32, shape=grad.get_shape())
+        gradient_placeholder = tf.placeholder(tf.float32,
+                                              shape=grad.get_shape())
         gradient_placeholders.append(gradient_placeholder)
         grads_and_vars_feed.append((gradient_placeholder, var))
     training_op = optimizer.apply_gradients(grads_and_vars_feed)
@@ -108,19 +112,3 @@ if __name__ == '__main__':
             sess.run(training_op, feed_dict=feed_dict)
             if iteration % SAVE_ITERATIONS:
                 saver.save(sess, './my_policy_net_pg.cpkt')
-
-    # for episode in range(N_EPISODES):
-    #     episode_rewards = 0
-    #     obs = env.reset()
-    #     for step in range(LEN_EPISODE):  # better than inf loop
-    #         action = basic_policy(obs)
-    #         obs, reward, done, info = env.step(action)
-    #         img = env.render(mode='rgb_array')
-    #         episode_rewards += reward
-    #         if done:
-    #             break
-    #     totals.append(episode_rewards)
-    # env.close()
-    # print('mean: {} | stddev: {} | min: {} | max: {}'.format(
-    #     np.mean(totals), np.std(totals), np.min(totals), np.max(totals)
-    # ))
