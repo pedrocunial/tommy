@@ -4,10 +4,14 @@ import numpy as np
 from PIL import Image
 
 from keras.models import Sequential
-from keras.layers import Dense, Activation, Conv2D, Flatten, LSTM, Permute
+from keras.layers import Activation, LSTM, Dropout, Dense, TimeDistributed
+from keras.layers import Conv2D, Flatten, Permute
 from keras.optimizers import Adam
-import keras.backend as K
-# from collections import deque
+
+# keras-extra lib from
+# https://github.com/anayebi/keras-extra/blob/master/extra.py
+# from lib.extra import TimeDistributedConvolution2D, TimeDistributedFlatten
+from collections import deque
 
 from rl.agents.dqn import DQNAgent
 from rl.policy import LinearAnnealedPolicy, EpsGreedyQPolicy
@@ -70,6 +74,7 @@ TIME_DEPTH = 5
 
 INPUT_SHAPE = (84, 84)
 WINDOW_LENGTH = 4
+TIME_SPAM = 5
 
 
 class AtariProcessor(Processor):
@@ -77,6 +82,10 @@ class AtariProcessor(Processor):
     from keras-kl example
     https://github.com/keras-rl/keras-rl/blob/master/examples/dqn_atari.py
     '''
+
+    def __init__(self):
+        self.last_samples = deque([]*5, 5)
+
     def process_observation(self, observation):
         assert observation.ndim == 3  # (height, width, channel)
         img = Image.fromarray(observation)
@@ -85,7 +94,8 @@ class AtariProcessor(Processor):
         processed_observation = np.array(img)
         assert processed_observation.shape == INPUT_SHAPE
         # saves storage in experience memory
-        return processed_observation.astype('uint8')
+        self.last_samples.append(processed_observation.astype('uint8'))
+        return self.last_samples
 
     def process_state_batch(self, batch):
         '''
@@ -114,30 +124,39 @@ if __name__ == '__main__':
     model = Sequential()
     # model.add(Permute((2, 3, 1), input_shape=env.observation_space.shape))
     # observation_space.shape + (5,) to add 5 time frames (last 5 frames)
-    if K.image_dim_ordering() == 'tf':
-        # (width, height, channels)
-        model.add(Permute((2, 3, 1), input_shape=shape))
-    elif K.image_dim_ordering() == 'th':
-        # (channels, width, height)
-        model.add(Permute((1, 2, 3), input_shape=shape))
-    else:
-        raise RuntimeError('Unknown image_dim_ordering.')
+    # if K.image_dim_ordering() == 'tf':
+    #     # (width, height, channels)
+    #     model.add(Permute((2, 3, 1, 4), input_shape=(5,)+shape,
+    #                       return_sequences=True))
+    # elif K.image_dim_ordering() == 'th':
+    #     # (channels, width, height)
+    #     model.add(Permute((1, 2, 3, 4), input_shape=(5,)+shape,
+    #                       return_sequences=True))
+    # else:
+    #     raise RuntimeError('Unknown image_dim_ordering.')
 
-    model.add(Conv2D(32, (8, 8), strides=(4, 4), name='conv0_open_layer'))
+    model.add(Permute((2, 1, 3, 4), input_shape=(TIME_SPAM,)+shape))
+    model.add(TimeDistributed(Conv2D(32, (8, 8), strides=(4, 4),
+                                     border_mode='same',
+                                     name='conv0_open_layer'),
+                              name='time_distributed_input'))
     model.add(Activation('relu', name='relu0'))
-    model.add(Conv2D(64, (4, 4), strides=(2, 2), name='conv1_4x4_stride_2x2'))
-    model.add(Activation('relu', name='relu1'))
-    model.add(Conv2D(64, (3, 3), strides=(1, 1), name='conv2_3x3_nostride'))
-    model.add(Activation('relu', name='relu2'))
+    # model.add(TimeDistributed(Conv2D(64, (4, 4),
+    #                                  strides=(2, 2),
+    #                                  name='conv1_4x4_stride_2x2')))
+    # model.add(Activation('relu', name='relu1'))
+    # model.add(Conv2D(64, (3, 3), strides=(1, 1), name='conv2_3x3_nostride'))
+    # model.add(Activation('relu', name='relu2'))
     # default activation is tanh
-    # model.add(LSTM(64, activation='tanh', name='lstm'))
-    model.add(Flatten(name='flatten'))
-    model.add(Dense(64, name='dense0'))
-    model.add(Activation('relu', name='relu3'))
+    model.add(TimeDistributed(Flatten(), name='time_distributed_flatten'))
+    model.add(LSTM(64, activation='tanh', name='lstm', return_sequences=True))
     # 9 possible actions
-    model.add(Dense(env.action_space.n, name='dense1_final_dense'))
+    model.add(Dropout(0.5))  # avoid overfitting and increase performance
+    model.add(Flatten())
+    model.add(Dense(env.action_space.n,
+                    name='dense1_final_dense'))
     # using sigmoid as sugested by the professor
-    model.add(Activation('sigmoid', name='output_sigmoid'))
+    model.add(Activation('sigmoid', name='output_layer'))
     print(model.summary())
 
     # lr value from
@@ -147,9 +166,19 @@ if __name__ == '__main__':
     memory = SequentialMemory(limit=1000000, window_length=WINDOW_LENGTH)
     processor = AtariProcessor()
 
+    # get first $TIME_SPAM obs to populate our processor
+    print('init -- begin')
+    env.reset()
+    for _ in range(TIME_SPAM):
+        env.render()
+        obs, _, _, _ = env.step(0)
+        processor.process_observation(obs)
+
+    print('init -- done')
+
     policy = LinearAnnealedPolicy(EpsGreedyQPolicy(), attr='eps', value_max=1.,
                                   value_min=.1, value_test=.05,
-                                  nb_steps=1000000)
+                                  nb_steps=100000)
     dqn = DQNAgent(model=model, nb_actions=env.action_space.n, policy=policy,
                    memory=memory, processor=processor, nb_steps_warmup=50000,
                    gamma=.99, target_model_update=10000, train_interval=4,
