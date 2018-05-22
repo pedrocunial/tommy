@@ -22,7 +22,8 @@ from rl.callbacks import FileLogger, ModelIntervalCheckpoint
 
 PINBALL = 'VideoPinball-v0'
 CART_POLE = 'CartPole-v0'
-ROM = PINBALL
+BREAKOUT = 'BreakoutDeterministic-v4'
+ROM = BREAKOUT
 
 # NOTE: actions represent the 9 possible positions for the joystick
 #       in Géron p470
@@ -115,44 +116,32 @@ if __name__ == '__main__':
     env = gym.make(ROM)
     epochs = 1000
     highscore = 0
-    shape = (WINDOW_LENGTH,) + INPUT_SHAPE
+    shape = (WINDOW_LENGTH, TIME_SPAM,) + INPUT_SHAPE
     print(shape)
 
     # using model from
     # https://github.com/keras-rl/keras-rl/blob/master/examples/dqn_atari.py
     # but added a rnn for time
     model = Sequential()
-    # model.add(Permute((2, 3, 1), input_shape=env.observation_space.shape))
-    # observation_space.shape + (5,) to add 5 time frames (last 5 frames)
-    # if K.image_dim_ordering() == 'tf':
-    #     # (width, height, channels)
-    #     model.add(Permute((2, 3, 1, 4), input_shape=(5,)+shape,
-    #                       return_sequences=True))
-    # elif K.image_dim_ordering() == 'th':
-    #     # (channels, width, height)
-    #     model.add(Permute((1, 2, 3, 4), input_shape=(5,)+shape,
-    #                       return_sequences=True))
-    # else:
-    #     raise RuntimeError('Unknown image_dim_ordering.')
-
-    model.add(Permute((2, 1, 3, 4), input_shape=(TIME_SPAM,)+shape))
-    model.add(TimeDistributed(Conv2D(32, (8, 8), strides=(4, 4),
-                                     border_mode='same',
+    model.add(Permute((2, 1, 3, 4), input_shape=shape,
+                      name='permute_input_layer'))
+    model.add(TimeDistributed(Conv2D(64, (4, 4), strides=(4, 4),
+                                     padding='same',
                                      name='conv0_open_layer'),
                               name='time_distributed_input'))
     model.add(Activation('relu', name='relu0'))
-    # model.add(TimeDistributed(Conv2D(64, (4, 4),
+    # model.add(TimeDistributed(Conv2D(32, (4, 4),
     #                                  strides=(2, 2),
+    #                                  padding='same',
     #                                  name='conv1_4x4_stride_2x2')))
     # model.add(Activation('relu', name='relu1'))
     # model.add(Conv2D(64, (3, 3), strides=(1, 1), name='conv2_3x3_nostride'))
     # model.add(Activation('relu', name='relu2'))
     # default activation is tanh
     model.add(TimeDistributed(Flatten(), name='time_distributed_flatten'))
-    model.add(LSTM(64, activation='tanh', name='lstm', return_sequences=True))
+    model.add(LSTM(32, activation='tanh', name='lstm', return_sequences=False))
     # 9 possible actions
-    model.add(Dropout(0.5))  # avoid overfitting and increase performance
-    model.add(Flatten())
+    model.add(Dropout(0.5))  # avoid overfitting
     model.add(Dense(env.action_space.n,
                     name='dense1_final_dense'))
     # using sigmoid as sugested by the professor
@@ -170,7 +159,6 @@ if __name__ == '__main__':
     print('init -- begin')
     env.reset()
     for _ in range(TIME_SPAM):
-        env.render()
         obs, _, _, _ = env.step(0)
         processor.process_observation(obs)
 
@@ -178,54 +166,29 @@ if __name__ == '__main__':
 
     policy = LinearAnnealedPolicy(EpsGreedyQPolicy(), attr='eps', value_max=1.,
                                   value_min=.1, value_test=.05,
-                                  nb_steps=100000)
+                                  nb_steps=100)
     dqn = DQNAgent(model=model, nb_actions=env.action_space.n, policy=policy,
-                   memory=memory, processor=processor, nb_steps_warmup=50000,
-                   gamma=.99, target_model_update=10000, train_interval=4,
+                   memory=memory, processor=processor, nb_steps_warmup=300,
+                   gamma=.99, target_model_update=10, train_interval=4,
                    delta_clip=1.)
 
-    dqn.compile(Adam(lr=.00025), metrics=['mae'])
+    dqn.compile(Adam(lr=.0025), metrics=['mae'])
 
     # Okay, now it's time to learn something! We capture the interrupt
     # exception so that training can be prematurely aborted. Notice that
     # you can the built-in Keras callbacks!
-    weights_filename = 'dqn_{}_weights.h5f'.format(ROM)
-    checkpoint_weights_filename = 'dqn_' + ROM + '_weights_{step}.h5f'
-    log_filename = 'dqn_{}_log.json'.format(ROM)
+    data_dir = 'data/'
+    weights_filename = data_dir + 'dqn_{}_weights.h5f'.format(ROM)
+    checkpoint_weights_filename = data_dir + 'dqn_' + ROM + '_weights_{step}.h5f'
+    log_filename = data_dir + 'dqn_{}_log.json'.format(ROM)
     callbacks = [ModelIntervalCheckpoint(checkpoint_weights_filename,
-                                         interval=250000)]
-    callbacks += [FileLogger(log_filename, interval=100)]
-    dqn.fit(env, callbacks=callbacks, nb_steps=1750000, log_interval=10000)
+                                         interval=25000)]
+    callbacks += [FileLogger(log_filename, interval=10000)]
+    dqn.fit(env, callbacks=callbacks, nb_steps=1750, log_interval=10000)
 
     # After training is done, we save the final weights one more time.
     dqn.save_weights(weights_filename, overwrite=True)
 
     # Finally, evaluate our algorithm for 10 episodes.
-    dqn.test(env, nb_episodes=10, visualize=False)
+    dqn.test(env, nb_episodes=3, visualize=True)
     print('done')
-
-    # for i_episode in range(20):
-    #     print('started episode #{}'.format(i_episode))
-    #     obs = env.reset()
-    #     points = 0
-    #     action = PULL_BALL
-    #     for t in range(epochs):
-    #         done = False
-    #         iters = LAUNCH_STEPS
-    #         frames = deque([0] * TIME_DEPTH, TIME_DEPTH)  # keeps size
-    #         while not done:
-    #             env.render()
-    #             obs, rwd, done, info = env.step(action)
-    #             print(obs)
-    #             frames.append(obs)  # deque keeps its size
-    #             # obs = obs.reshape(-1, obs.shape[0], obs.shape[1], obs.shape[2])
-    #             # predict action from observed
-    #             # action = ()
-    #             print(action)
-    #             points += rwd
-    #             iters += 1
-    #             if done:
-    #                 if points > highscore:
-    #                     highscore = points
-    #                     print('A new highscore! {}'.format(highscore))
-    #                 print('Done after {} trials'.format(iters))
