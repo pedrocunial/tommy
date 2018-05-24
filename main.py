@@ -1,17 +1,18 @@
 import gym
 import numpy as np
+import argparse
 
 from PIL import Image
 
 from keras.models import Sequential
-from keras.layers import Activation, LSTM, Dropout, Dense, TimeDistributed
+from keras.layers import Dense, MaxPooling2D, Activation
 from keras.layers import Conv2D, Flatten, Permute
 from keras.optimizers import Adam
 
 # keras-extra lib from
 # https://github.com/anayebi/keras-extra/blob/master/extra.py
 # from lib.extra import TimeDistributedConvolution2D, TimeDistributedFlatten
-from collections import deque
+# from collections import deque
 
 from rl.agents.dqn import DQNAgent
 from rl.policy import LinearAnnealedPolicy, EpsGreedyQPolicy
@@ -40,42 +41,9 @@ LAUNCH_STEPS = 20  # frames required to launch ball
 TIME_DEPTH = 5
 
 
-# def preprocess_observation(obs):
-#     # from Géron p470
-#     # my image is (250, 160, 3) -- for the raw version of VideoPinball
-#     img = obs[20:200:2, ::2]
-#     img = img.mean(axis=2)
-#     img = (img - 128) / 128 - 1  # normalize
-#     return img.reshape(88, 80, 1)
-
-
-# def max_index(options):
-#     # print(options)
-#     # cs = cumsum(options)
-#     # res = [i / cs for i in options]
-#     # print(len(res), res)
-#     options = options[0]
-#     cs = cumsum(options)
-#     probas = [x / cs for x in options]
-#     print(probas, options, cs)
-#     return choice(9, p=probas)
-
-
-# def start_game(env, frames):
-#     print('Start game! Pulling Ball!')
-#     for i in range(LAUNCH_STEPS):
-#         env.render()
-#         obs, _, _, _ = env.step(PULL_BALL)
-#         frames.append(obs)
-#     print('Ball pulled! Launching!')
-#     for i in range(LAUNCH_STEPS):
-#         env.render()
-#         obs, _, _, _ = env.step(LAUNCH_BALL)
-#         frames.append(obs)
-
 INPUT_SHAPE = (84, 84)
-WINDOW_LENGTH = 4
-TIME_SPAM = 5
+WINDOW_LENGTH = 3  # time spam
+# TIME_SPAM = 5
 
 
 class AtariProcessor(Processor):
@@ -83,10 +51,6 @@ class AtariProcessor(Processor):
     from keras-kl example
     https://github.com/keras-rl/keras-rl/blob/master/examples/dqn_atari.py
     '''
-
-    def __init__(self):
-        self.last_samples = deque([]*5, 5)
-
     def process_observation(self, observation):
         assert observation.ndim == 3  # (height, width, channel)
         img = Image.fromarray(observation)
@@ -95,8 +59,7 @@ class AtariProcessor(Processor):
         processed_observation = np.array(img)
         assert processed_observation.shape == INPUT_SHAPE
         # saves storage in experience memory
-        self.last_samples.append(processed_observation.astype('uint8'))
-        return self.last_samples
+        return processed_observation.astype('uint8')
 
     def process_state_batch(self, batch):
         '''
@@ -113,23 +76,34 @@ class AtariProcessor(Processor):
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', choices=['train', 'test'], default='test')
+    parser.add_argument('--steps', type=int, default=10000)
+
+    args = parser.parse_args()
+
     env = gym.make(ROM)
     epochs = 1000
     highscore = 0
-    shape = (WINDOW_LENGTH, TIME_SPAM,) + INPUT_SHAPE
+    shape = (WINDOW_LENGTH,) + INPUT_SHAPE
     print(shape)
 
     # using model from
     # https://github.com/keras-rl/keras-rl/blob/master/examples/dqn_atari.py
     # but added a rnn for time
     model = Sequential()
-    model.add(Permute((2, 1, 3, 4), input_shape=shape,
+    # tensorflow uses w, h, c
+    model.add(Permute((2, 3, 1), input_shape=shape,
                       name='permute_input_layer'))
-    model.add(TimeDistributed(Conv2D(64, (4, 4), strides=(4, 4),
-                                     padding='same',
-                                     name='conv0_open_layer'),
-                              name='time_distributed_input'))
-    model.add(Activation('relu', name='relu0'))
+    model.add(Conv2D(3, (1, 1),
+                     padding='same',
+                     activation='relu',
+                     name='conv0_open_layer'))
+    model.add(MaxPooling2D())
+    model.add(Conv2D(1, (1, 1), padding='same',
+                     activation='relu',
+                     name='flattenner_conv1'))
+    model.add(MaxPooling2D())
     # model.add(TimeDistributed(Conv2D(32, (4, 4),
     #                                  strides=(2, 2),
     #                                  padding='same',
@@ -138,10 +112,11 @@ if __name__ == '__main__':
     # model.add(Conv2D(64, (3, 3), strides=(1, 1), name='conv2_3x3_nostride'))
     # model.add(Activation('relu', name='relu2'))
     # default activation is tanh
-    model.add(TimeDistributed(Flatten(), name='time_distributed_flatten'))
-    model.add(LSTM(32, activation='tanh', name='lstm', return_sequences=False))
+    model.add(Flatten())
+    # model.add(LSTM(32, activation='tanh', name='lstm',
+    #                return_sequences=False))
     # 9 possible actions
-    model.add(Dropout(0.5))  # avoid overfitting
+    # model.add(Dropout(0.5))  # avoid overfitting
     model.add(Dense(env.action_space.n,
                     name='dense1_final_dense'))
     # using sigmoid as sugested by the professor
@@ -150,45 +125,42 @@ if __name__ == '__main__':
 
     # lr value from
     # https://github.com/keras-rl/keras-rl/blob/master/examples/dqn_atari.py
-    model.compile(loss='mse', optimizer=Adam(lr=.00025))
+    model.compile(loss='mse', optimizer=Adam(lr=.0025))
 
-    memory = SequentialMemory(limit=1000000, window_length=WINDOW_LENGTH)
+    memory = SequentialMemory(limit=10000000, window_length=WINDOW_LENGTH)
     processor = AtariProcessor()
-
-    # get first $TIME_SPAM obs to populate our processor
-    print('init -- begin')
-    env.reset()
-    for _ in range(TIME_SPAM):
-        obs, _, _, _ = env.step(0)
-        processor.process_observation(obs)
-
-    print('init -- done')
 
     policy = LinearAnnealedPolicy(EpsGreedyQPolicy(), attr='eps', value_max=1.,
                                   value_min=.1, value_test=.05,
-                                  nb_steps=100)
+                                  nb_steps=100000)
     dqn = DQNAgent(model=model, nb_actions=env.action_space.n, policy=policy,
-                   memory=memory, processor=processor, nb_steps_warmup=300,
+                   memory=memory, processor=processor, nb_steps_warmup=50,
                    gamma=.99, target_model_update=10, train_interval=4,
                    delta_clip=1.)
 
     dqn.compile(Adam(lr=.0025), metrics=['mae'])
 
-    # Okay, now it's time to learn something! We capture the interrupt
-    # exception so that training can be prematurely aborted. Notice that
-    # you can the built-in Keras callbacks!
     data_dir = 'data/'
     weights_filename = data_dir + 'dqn_{}_weights.h5f'.format(ROM)
-    checkpoint_weights_filename = data_dir + 'dqn_' + ROM + '_weights_{step}.h5f'
-    log_filename = data_dir + 'dqn_{}_log.json'.format(ROM)
-    callbacks = [ModelIntervalCheckpoint(checkpoint_weights_filename,
-                                         interval=25000)]
-    callbacks += [FileLogger(log_filename, interval=10000)]
-    dqn.fit(env, callbacks=callbacks, nb_steps=1750, log_interval=10000)
+    if args.mode == 'train':
+        # Okay, now it's time to learn something! We capture the interrupt
+        # exception so that training can be prematurely aborted. Notice that
+        # you can the built-in Keras callbacks!
+        checkpoint_weights_filename = (data_dir + 'dqn_' + ROM
+                                       + '_weights_{step}.h5f')
+        log_filename = data_dir + 'dqn_{}_log.json'.format(ROM)
+        callbacks = [ModelIntervalCheckpoint(checkpoint_weights_filename,
+                                             interval=2500)]
+        callbacks += [FileLogger(log_filename, interval=100)]
+        dqn.fit(env, callbacks=callbacks, nb_steps=args.steps,
+                log_interval=10000)
 
-    # After training is done, we save the final weights one more time.
-    dqn.save_weights(weights_filename, overwrite=True)
+        # After training is done, we save the final weights one more time.
+        dqn.save_weights(weights_filename, overwrite=True)
 
-    # Finally, evaluate our algorithm for 10 episodes.
-    dqn.test(env, nb_episodes=3, visualize=True)
-    print('done')
+        # Finally, evaluate our algorithm for 10 episodes.
+        dqn.test(env, nb_episodes=3, visualize=True)
+        print('done')
+    else:
+        dqn.load_weights(weights_filename)
+        dqn.test(env, nb_episodes=10, visualize=True)
