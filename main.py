@@ -24,6 +24,7 @@ from rl.callbacks import FileLogger, ModelIntervalCheckpoint
 PINBALL = 'VideoPinball-v0'
 CART_POLE = 'CartPole-v0'
 BREAKOUT = 'BreakoutDeterministic-v4'
+AIRRAID = 'AirRaid-v0'   # space-invaders like game
 ROM = BREAKOUT
 
 # NOTE: actions represent the 9 possible positions for the joystick
@@ -95,28 +96,22 @@ if __name__ == '__main__':
     # tensorflow uses w, h, c
     model.add(Permute((2, 3, 1), input_shape=shape,
                       name='permute_input_layer'))
-    model.add(Conv2D(3, (1, 1),
+    model.add(Conv2D(16, (4, 4),
+                     strides=4,
                      padding='same',
                      activation='relu',
                      name='conv0_open_layer'))
     model.add(MaxPooling2D())
-    model.add(Conv2D(1, (1, 1), padding='same',
+    model.add(Conv2D(4, (2, 2), padding='same',
+                     strides=2,
                      activation='relu',
                      name='flattenner_conv1'))
     model.add(MaxPooling2D())
-    # model.add(TimeDistributed(Conv2D(32, (4, 4),
-    #                                  strides=(2, 2),
-    #                                  padding='same',
-    #                                  name='conv1_4x4_stride_2x2')))
-    # model.add(Activation('relu', name='relu1'))
-    # model.add(Conv2D(64, (3, 3), strides=(1, 1), name='conv2_3x3_nostride'))
-    # model.add(Activation('relu', name='relu2'))
-    # default activation is tanh
+    model.add(Conv2D(1, (1, 1), padding='same',
+                     activation='relu',
+                     name='conv2'))
+    model.add(MaxPooling2D())
     model.add(Flatten())
-    # model.add(LSTM(32, activation='tanh', name='lstm',
-    #                return_sequences=False))
-    # 9 possible actions
-    # model.add(Dropout(0.5))  # avoid overfitting
     model.add(Dense(env.action_space.n,
                     name='dense1_final_dense'))
     # using sigmoid as sugested by the professor
@@ -162,5 +157,6 @@ if __name__ == '__main__':
         dqn.test(env, nb_episodes=3, visualize=True)
         print('done')
     else:
+        # env.reset()
         dqn.load_weights(weights_filename)
         dqn.test(env, nb_episodes=10, visualize=True)
