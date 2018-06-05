@@ -159,7 +159,7 @@ if __name__ == '__main__':
         # After training is done, we save the final weights one more time.
         dqn.save_weights(weights_filename, overwrite=True)
 
-        dqn.test(env, nb_episodes=3, visualize=True)
+        dqn.test(env, nb_episodes=3, visualize=False)
         print('done')
     else:
         dqn.load_weights(weights_filename)
