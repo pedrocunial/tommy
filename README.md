@@ -1,3 +1,8 @@
-# Tommy -- The Pinball Bot
+# Tommy -- The Atari Bot
 
-A Atari Video-Pinball bot using TensorFlow and neural networks
+Requirements:
+  - Python3+
+    * tensorflow
+    * keras
+    * keras-rl (build from source at https://github.com/keras-rl/keras-rl)
+    * gym[atari] (`pip install "gym[atari]" -- doesn't work on windows)
